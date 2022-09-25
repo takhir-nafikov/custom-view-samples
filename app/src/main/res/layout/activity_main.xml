@@ -6,31 +6,12 @@
     android:layout_height="match_parent"
     tools:context=".MainActivity">
 
-    <com.example.custom.view.samples.CustomViewGroup
-        android:layout_width="match_parent"
+    <com.example.custom.view.samples.gant.GantView
+        android:id="@+id/gant"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <TextView
-            android:id="@+id/qwe"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:maxLines="1"
-            android:text="Вам привет от Android Broadcast"
-            android:textSize="20sp" />
-
-        <TextView
-            android:id="@+id/hjk"
-            android:layout_width="50dp"
-            android:layout_height="wrap_content"
-            android:maxLines="1"
-            android:text="20:10"
-            android:textSize="16sp"
-            app:flow_horizontalBias="1"
-            app:layout_constraintEnd_toEndOf="parent" />
-
-    </com.example.custom.view.samples.CustomViewGroup>
+        app:layout_constraintTop_toTopOf="parent"/>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
