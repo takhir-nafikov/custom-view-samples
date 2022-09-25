@@ -1,4 +1,4 @@
-package com.example.custom.view.samples
+package com.example.custom.view.samples.viewgroup
 
 import android.animation.TypeEvaluator
 import android.animation.ValueAnimator

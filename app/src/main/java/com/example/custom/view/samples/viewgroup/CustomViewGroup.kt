@@ -1,4 +1,4 @@
-package com.example.custom.view.samples
+package com.example.custom.view.samples.viewgroup
 
 import android.animation.TypeEvaluator
 import android.animation.ValueAnimator
@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.view.animation.BaseInterpolator
 import android.widget.TextView
 import androidx.core.content.withStyledAttributes
+import com.example.custom.view.samples.R
 import kotlin.math.max
 import kotlin.math.roundToInt
 
