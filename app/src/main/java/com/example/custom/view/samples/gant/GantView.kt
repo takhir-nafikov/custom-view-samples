@@ -35,10 +35,7 @@ class GantView @JvmOverloads constructor(
     }
 
     // Для фигур тасок
-    private val taskShapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = ContextCompat.getColor(context, R.color.blue_700)
-    }
+    private val taskShapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
     // Для названий тасок
     private val taskNamePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -70,6 +67,10 @@ class GantView @JvmOverloads constructor(
         ContextCompat.getColor(context, R.color.grey_100),
         Color.WHITE
     )
+
+    // Цвета градиента
+    private val gradientStartColor = ContextCompat.getColor(context, R.color.blue_700)
+    private val gradientEndColor = ContextCompat.getColor(context, R.color.blue_200)
 
     private val contentWidth: Int
         get() = periodWidth * periods.getValue(periodType).size
@@ -134,6 +135,16 @@ class GantView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         // Размер изменился, надо пересчитать ширину строки
         rowRect.set(0, 0, w, rowHeight)
+        // И размер градиента
+        taskShapePaint.shader = LinearGradient(
+            0f,
+            0f,
+            w.toFloat(),
+            0f,
+            gradientStartColor,
+            gradientEndColor,
+            Shader.TileMode.CLAMP
+        )
         // И прямоугольники тасок
         updateTasksRects()
     }
