@@ -4,10 +4,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.applyCanvas
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.withTranslation
 import com.example.custom.view.samples.R
 import java.time.LocalDate
 import java.time.temporal.IsoFields
@@ -45,12 +47,10 @@ class GantView @JvmOverloads constructor(
         color = Color.WHITE
     }
 
-    // Для откусывания поолукруга от таски
+    // Для откусывания полукруга от таски
     private val cutOutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
     }
-
-    // Paint для
 
     // endregion
 
@@ -94,8 +94,7 @@ class GantView @JvmOverloads constructor(
     // Rect для рисования строк
     private val rowRect = Rect()
 
-    // Bitmap для фигур тасок
-    private lateinit var tasksBitmap: Bitmap
+    private lateinit var bitmap: Bitmap
 
     // endregion
 
@@ -106,6 +105,17 @@ class GantView @JvmOverloads constructor(
     private val periods = initPeriods()
     // endregion
 
+    // region Вспомогательные сущности для обработки Touch эвентов
+
+    // Значения последнего эвента
+    private val lastPoint = PointF()
+    private var lastPointerId = 0
+
+    // Отвечает за зум и сдвиги
+    private val transformations = Transformations()
+
+    // endregion
+
     private var tasks: List<Task> = emptyList()
     private var uiTasks: List<UiTask> = emptyList()
 
@@ -113,7 +123,7 @@ class GantView @JvmOverloads constructor(
         if (tasks != this.tasks) {
             this.tasks = tasks
             uiTasks = tasks.map(::UiTask)
-            updateTasksBitmap()
+            updateTasksRects()
 
             // Сообщаем, что нужно пересчитать размеры
             requestLayout()
@@ -163,24 +173,18 @@ class GantView @JvmOverloads constructor(
             Shader.TileMode.CLAMP
         )
         // И пересоздать Bitmap для фигур тасок
-        updateTasksBitmap()
+        updateTasksRects()
+
+        bitmap = createBitmap(contentWidth, h).applyCanvas {
+            drawPeriods()
+            drawTasks()
+        }
     }
 
-    private fun updateTasksBitmap() {
-        if (width == 0 || height == 0) return
-
-        tasksBitmap = createBitmap(width, height).applyCanvas {
-            uiTasks.forEachIndexed { index, uiTask ->
-                uiTask.updateRect(index)
-                if (uiTask.isRectOnScreen) {
-                    val taskRect = uiTask.rect
-                    // Фигура таски
-                    drawRoundRect(taskRect, taskCornerRadius, taskCornerRadius, taskShapePaint)
-                    // Откусываем кусок от фигуры
-                    drawCircle(taskRect.left, taskRect.centerY(), cutOutRadius, cutOutPaint)
-                }
-            }
-        }
+    private fun updateTasksRects() {
+        uiTasks.forEachIndexed { index, uiTask -> uiTask.updateRect(index) }
+        // Пересчитываем что необходимо и применяем предыдущие трансформации
+        transformations.recalculate()
     }
 
     // endregion
@@ -189,8 +193,9 @@ class GantView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) = with(canvas) {
         drawRows()
-        drawPeriods()
-        drawTasks()
+        withTranslation(x = transformations.translationX) {
+            drawBitmap(bitmap, 0f, 0f, rowPaint)
+        }
     }
 
     private fun Canvas.drawRows() {
@@ -222,27 +227,67 @@ class GantView @JvmOverloads constructor(
     }
 
     private fun Canvas.drawTasks() {
-        drawBitmap(tasksBitmap, 0f, 0f, rowPaint)
         uiTasks.forEach { uiTask ->
-            if (uiTask.isRectOnScreen) {
-                val taskRect = uiTask.rect
-                val taskName = uiTask.task.name
-                // Расположение названия
-                val textX = taskRect.left + taskTextHorizontalMargin + cutOutRadius
-                val textY = taskNamePaint.getTextBaselineByCenter(taskRect.centerY())
-                // Количество символов из названия, которые поместятся в фигуру
-                val charsCount = taskNamePaint.breakText(
-                    taskName,
-                    true,
-                    taskRect.width() - taskTextHorizontalMargin * 2 - cutOutRadius,
-                    null
-                )
-                drawText(taskName.substring(startIndex = 0, endIndex = charsCount), textX, textY, taskNamePaint)
-            }
+            val taskRect = uiTask.rect
+            val taskName = uiTask.task.name
+
+            drawRoundRect(taskRect, taskCornerRadius, taskCornerRadius, taskShapePaint)
+            drawCircle(taskRect.left, taskRect.centerY(), cutOutRadius, cutOutPaint)
+
+            // Расположение названия
+            val textX = taskRect.left + taskTextHorizontalMargin + cutOutRadius
+            val textY = taskNamePaint.getTextBaselineByCenter(taskRect.centerY())
+            // Количество символов из названия, которые поместятся в фигуру
+            val charsCount = taskNamePaint.breakText(
+                taskName,
+                true,
+                taskRect.width() - taskTextHorizontalMargin * 2 - cutOutRadius,
+                null
+            )
+            drawText(taskName.substring(startIndex = 0, endIndex = charsCount), textX, textY, taskNamePaint)
         }
     }
 
     private fun Paint.getTextBaselineByCenter(center: Float) = center - (descent() + ascent()) / 2
+
+    // endregion
+
+    // region Тачи
+    override fun onTouchEvent(event: MotionEvent?): Boolean {
+        event ?: return false
+
+        return if (event.pointerCount == 1) processMove(event) else false
+    }
+
+    private fun processMove(event: MotionEvent): Boolean {
+        return when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                lastPoint.set(event.x, event.y)
+                lastPointerId = event.getPointerId(0)
+                true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                // Если размер контента меньше размера View - сдвиг недоступен
+                if (width < contentWidth) {
+                    val pointerId = event.getPointerId(0)
+                    // Чтобы избежать скачков - сдвигаем, только если поинтер(палец) тот же, что и раньше
+                    if (lastPointerId == pointerId) {
+                        transformations.addTranslation(event.x - lastPoint.x)
+                    }
+                    // Запоминаем поинтер и последнюю точку в любом случае
+                    lastPoint.set(event.x, event.y)
+                    lastPointerId = event.getPointerId(0)
+
+                    true
+                } else {
+                    false
+                }
+            }
+
+            else -> false
+        }
+    }
 
     // endregion
 
@@ -283,6 +328,31 @@ class GantView @JvmOverloads constructor(
                 getX(task.dateEnd) ?: width + taskCornerRadius,
                 rowHeight * (index + 2f) - taskVerticalMargin,
             )
+        }
+    }
+
+    private inner class Transformations {
+        var translationX = 0f
+            private set
+
+        // На сколько максимально можно сдвинуть диаграмму
+        private val minTranslation: Float
+            get() = (width - contentWidth).toFloat().coerceAtMost(0f)
+
+        // Относительный сдвиг на dx
+        fun addTranslation(dx: Float) {
+            translationX = (translationX + dx).coerceIn(minTranslation, 0f)
+            invalidate()
+        }
+
+        // Пересчет текущих значений
+        fun recalculate() {
+            recalculateTranslationX()
+        }
+
+        // Когда изменился размер View надо пересчитать сдвиг
+        private fun recalculateTranslationX() {
+            translationX = translationX.coerceIn(minTranslation, 0f)
         }
     }
 
