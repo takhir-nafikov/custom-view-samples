@@ -3,14 +3,13 @@ package com.example.custom.view.samples.gant
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.*
+import android.os.Parcel
+import android.os.Parcelable
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.applyCanvas
-import androidx.core.graphics.createBitmap
-import androidx.core.graphics.withTranslation
 import com.example.custom.view.samples.R
 import java.time.LocalDate
 import java.time.temporal.IsoFields
@@ -130,6 +129,23 @@ class GantView @JvmOverloads constructor(
             invalidate()
         }
     }
+
+    // region Сохранение состояния
+
+    override fun onSaveInstanceState(): Parcelable {
+        return SavedState(super.onSaveInstanceState()).also(transformations::onSaveInstanceState)
+    }
+
+    override fun onRestoreInstanceState(state: Parcelable?) {
+        if (state is SavedState) {
+            super.onRestoreInstanceState(state.superState)
+            transformations.onRestoreInstanceState(state)
+        } else {
+            super.onRestoreInstanceState(state)
+        }
+    }
+
+    // endregion
 
     // region Измерения размеров
 
@@ -378,7 +394,7 @@ class GantView @JvmOverloads constructor(
         // Относительный сдвиг на dx
         fun addTranslation(dx: Float) {
             translationX = (translationX + dx).coerceIn(minTranslation, 0f)
-            transformTasks()
+            updateTasks()
         }
 
         // Относительное увеличение на sx
@@ -386,14 +402,25 @@ class GantView @JvmOverloads constructor(
             scaleX = (scaleX * sx).coerceIn(1f, MAX_SCALE)
             recalculateTranslationX()
             updatePeriodTypeIfNeeded(scaleX)
-            transformTasks()
+            updateTasks()
+        }
+
+        fun onSaveInstanceState(state: SavedState) {
+            state.translationX = translationX
+            state.scaleX = scaleX
+        }
+
+        fun onRestoreInstanceState(state: SavedState) {
+            translationX = state.translationX
+            scaleX = state.scaleX
+            recalculate()
         }
 
         // Пересчет необходимых значений и применение к таскам
         fun recalculate() {
             recalculateTranslationX()
             updatePeriodTypeIfNeeded(scaleX)
-            transformTasks()
+            updateTasks()
         }
 
         // Когда изменился scale или размер View надо пересчитать сдвиг
@@ -401,7 +428,7 @@ class GantView @JvmOverloads constructor(
             translationX = translationX.coerceIn(minTranslation, 0f)
         }
 
-        private fun transformTasks() {
+        private fun updateTasks() {
             // Подготовка матрицы для трансформации фигур тасок
             with(matrix) {
                 reset()
@@ -434,6 +461,39 @@ class GantView @JvmOverloads constructor(
                 true
             } else {
                 false
+            }
+        }
+    }
+
+    private class SavedState : BaseSavedState {
+        var translationX: Float = 0f
+        var scaleX: Float = 0f
+
+        // Коснтруктор для сохранения стейта
+        constructor(superState: Parcelable?) : super(superState)
+
+        // Коснтруктор для восстановления стейта
+        constructor(source: Parcel?) : super(source) {
+            source?.apply {
+                // Порядок имеет значение
+                translationX = readFloat()
+                scaleX = readFloat()
+            }
+        }
+
+        override fun writeToParcel(out: Parcel?, flags: Int) {
+            super.writeToParcel(out, flags)
+            // Порядок имеет значение
+            out?.writeFloat(translationX)
+            out?.writeFloat(scaleX)
+        }
+
+        companion object {
+            // Как у любого Parcelable
+            @JvmField
+            val CREATOR: Parcelable.Creator<SavedState> = object : Parcelable.Creator<SavedState> {
+                override fun createFromParcel(source: Parcel): SavedState = SavedState(source)
+                override fun newArray(size: Int): Array<SavedState?> = arrayOfNulls(size)
             }
         }
     }
