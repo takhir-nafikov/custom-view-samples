@@ -196,6 +196,7 @@ class GantView @JvmOverloads constructor(
         withTranslation(x = transformations.translationX) {
             drawBitmap(bitmap, 0f, 0f, rowPaint)
         }
+        drawTasksNames()
     }
 
     private fun Canvas.drawRows() {
@@ -229,22 +230,28 @@ class GantView @JvmOverloads constructor(
     private fun Canvas.drawTasks() {
         uiTasks.forEach { uiTask ->
             val taskRect = uiTask.rect
-            val taskName = uiTask.task.name
 
             drawRoundRect(taskRect, taskCornerRadius, taskCornerRadius, taskShapePaint)
             drawCircle(taskRect.left, taskRect.centerY(), cutOutRadius, cutOutPaint)
+        }
+    }
+
+    private fun Canvas.drawTasksNames() {
+        val minTextLeft = taskTextHorizontalMargin
+        uiTasks.forEach { uiTask ->
+            val taskRect = uiTask.rect
+            val taskName = uiTask.task.name
 
             // Расположение названия
-            val textX = taskRect.left + taskTextHorizontalMargin + cutOutRadius
-            val textY = taskNamePaint.getTextBaselineByCenter(taskRect.centerY())
-            // Количество символов из названия, которые поместятся в фигуру
-            val charsCount = taskNamePaint.breakText(
-                taskName,
-                true,
-                taskRect.width() - taskTextHorizontalMargin * 2 - cutOutRadius,
-                null
-            )
-            drawText(taskName.substring(startIndex = 0, endIndex = charsCount), textX, textY, taskNamePaint)
+            val untranslatedTextLeft = taskRect.left + cutOutRadius + taskTextHorizontalMargin
+            val textLeft = (untranslatedTextLeft + transformations.translationX).coerceAtLeast(minTextLeft)
+            val maxTextWidth = taskRect.right + transformations.translationX - textLeft - taskTextHorizontalMargin
+            if (maxTextWidth > 0) {
+                val textY = taskNamePaint.getTextBaselineByCenter(taskRect.centerY())
+                // Количество символов из названия, которые поместятся в фигуру
+                val charsCount = taskNamePaint.breakText(taskName, true, maxTextWidth, null)
+                drawText(taskName.substring(startIndex = 0, endIndex = charsCount), textLeft, textY, taskNamePaint)
+            }
         }
     }
 
