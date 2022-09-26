@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.applyCanvas
@@ -47,10 +48,7 @@ class GantView @JvmOverloads constructor(
         color = Color.WHITE
     }
 
-    // Для откусывания полукруга от таски
-    private val cutOutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
-    }
+    // Paint для
 
     // endregion
 
@@ -94,8 +92,6 @@ class GantView @JvmOverloads constructor(
     // Rect для рисования строк
     private val rowRect = Rect()
 
-    private lateinit var bitmap: Bitmap
-
     // endregion
 
     // region Время
@@ -113,6 +109,9 @@ class GantView @JvmOverloads constructor(
 
     // Отвечает за зум и сдвиги
     private val transformations = Transformations()
+
+    // Обнаружение и расчет скейла
+    private val scaleGestureDetector = ScaleGestureDetector(context, ScaleListener())
 
     // endregion
 
@@ -172,17 +171,12 @@ class GantView @JvmOverloads constructor(
             gradientEndColor,
             Shader.TileMode.CLAMP
         )
-        // И пересоздать Bitmap для фигур тасок
+        // И прямоугольники тасок
         updateTasksRects()
-
-        bitmap = createBitmap(contentWidth, h).applyCanvas {
-            drawPeriods()
-            drawTasks()
-        }
     }
 
     private fun updateTasksRects() {
-        uiTasks.forEachIndexed { index, uiTask -> uiTask.updateRect(index) }
+        uiTasks.forEachIndexed { index, uiTask -> uiTask.updateInitialRect(index) }
         // Пересчитываем что необходимо и применяем предыдущие трансформации
         transformations.recalculate()
     }
@@ -193,10 +187,8 @@ class GantView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) = with(canvas) {
         drawRows()
-        withTranslation(x = transformations.translationX) {
-            drawBitmap(bitmap, 0f, 0f, rowPaint)
-        }
-        drawTasksNames()
+        drawPeriods()
+        drawTasks()
     }
 
     private fun Canvas.drawRows() {
@@ -219,38 +211,33 @@ class GantView @JvmOverloads constructor(
         val nameY = periodNamePaint.getTextBaselineByCenter(rowHeight / 2f)
         currentPeriods.forEachIndexed { index, periodName ->
             // По X текст рисуется относительно его начала
-            val nameX = periodWidth * (index + 0.5f) - periodNamePaint.measureText(periodName) / 2
+            val textWidth = periodNamePaint.measureText(periodName)
+            val periodCenter = periodWidth * transformations.scaleX * (index + 0.5f)
+            val nameX = (periodCenter - textWidth / 2) + transformations.translationX
             drawText(periodName, nameX, nameY, periodNamePaint)
             // Разделитель
-            val separatorX = periodWidth * (index + 1f)
+            val separatorX = periodWidth * (index + 1f) * transformations.scaleX + transformations.translationX
             drawLine(separatorX, 0f, separatorX, height.toFloat(), separatorsPaint)
         }
     }
 
     private fun Canvas.drawTasks() {
-        uiTasks.forEach { uiTask ->
-            val taskRect = uiTask.rect
-
-            drawRoundRect(taskRect, taskCornerRadius, taskCornerRadius, taskShapePaint)
-            drawCircle(taskRect.left, taskRect.centerY(), cutOutRadius, cutOutPaint)
-        }
-    }
-
-    private fun Canvas.drawTasksNames() {
         val minTextLeft = taskTextHorizontalMargin
         uiTasks.forEach { uiTask ->
-            val taskRect = uiTask.rect
-            val taskName = uiTask.task.name
+            if (uiTask.isRectOnScreen) {
+                drawPath(uiTask.path, taskShapePaint)
 
-            // Расположение названия
-            val untranslatedTextLeft = taskRect.left + cutOutRadius + taskTextHorizontalMargin
-            val textLeft = (untranslatedTextLeft + transformations.translationX).coerceAtLeast(minTextLeft)
-            val maxTextWidth = taskRect.right + transformations.translationX - textLeft - taskTextHorizontalMargin
-            if (maxTextWidth > 0) {
-                val textY = taskNamePaint.getTextBaselineByCenter(taskRect.centerY())
-                // Количество символов из названия, которые поместятся в фигуру
-                val charsCount = taskNamePaint.breakText(taskName, true, maxTextWidth, null)
-                drawText(taskName.substring(startIndex = 0, endIndex = charsCount), textLeft, textY, taskNamePaint)
+                val taskRect = uiTask.rect
+                val taskName = uiTask.task.name
+                // Расположение названия
+                val textStart = (taskRect.left + cutOutRadius + taskTextHorizontalMargin).coerceAtLeast(minTextLeft)
+                val maxTextWidth = taskRect.right - taskTextHorizontalMargin - textStart
+                if (maxTextWidth > 0) {
+                    val textY = taskNamePaint.getTextBaselineByCenter(taskRect.centerY())
+                    // Количество символов из названия, которые поместятся в фигуру
+                    val charsCount = taskNamePaint.breakText(taskName, true, maxTextWidth, null)
+                    drawText(taskName.substring(startIndex = 0, endIndex = charsCount), textStart, textY, taskNamePaint)
+                }
             }
         }
     }
@@ -260,10 +247,11 @@ class GantView @JvmOverloads constructor(
     // endregion
 
     // region Тачи
+    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         event ?: return false
 
-        return if (event.pointerCount == 1) processMove(event) else false
+        return if (event.pointerCount > 1) scaleGestureDetector.onTouchEvent(event) else processMove(event)
     }
 
     private fun processMove(event: MotionEvent): Boolean {
@@ -276,12 +264,13 @@ class GantView @JvmOverloads constructor(
 
             MotionEvent.ACTION_MOVE -> {
                 // Если размер контента меньше размера View - сдвиг недоступен
-                if (width < contentWidth) {
+                if (width < contentWidth * transformations.scaleX) {
                     val pointerId = event.getPointerId(0)
                     // Чтобы избежать скачков - сдвигаем, только если поинтер(палец) тот же, что и раньше
                     if (lastPointerId == pointerId) {
                         transformations.addTranslation(event.x - lastPoint.x)
                     }
+
                     // Запоминаем поинтер и последнюю точку в любом случае
                     lastPoint.set(event.x, event.y)
                     lastPointerId = event.getPointerId(0)
@@ -314,12 +303,23 @@ class GantView @JvmOverloads constructor(
     }
 
     private inner class UiTask(val task: Task) {
+        // Rect с учетом всех преобразований
         val rect = RectF()
 
-        val isRectOnScreen: Boolean
-            get() = rect.top < height && (rect.right > 0 || rect.left < rect.width())
+        // Path для фигуры таски
+        val path = Path()
 
-        fun updateRect(index: Int) {
+        // Path для вырезаемого круга
+        val cutOutPath = Path()
+
+        // Начальный Rect для текущих размеров View
+        private val untransformedRect = RectF()
+
+        // Если false, таск рисовать не нужно
+        val isRectOnScreen: Boolean
+            get() = rect.top < height && (rect.right > 0 || rect.left < width)
+
+        fun updateInitialRect(index: Int) {
             fun getX(date: LocalDate): Float? {
                 val periodIndex = periods.getValue(periodType).indexOf(periodType.getDateString(date))
                 return if (periodIndex >= 0) {
@@ -329,37 +329,112 @@ class GantView @JvmOverloads constructor(
                 }
             }
 
-            rect.set(
+            untransformedRect.set(
                 getX(task.dateStart) ?: -taskCornerRadius,
                 rowHeight * (index + 1f) + taskVerticalMargin,
                 getX(task.dateEnd) ?: width + taskCornerRadius,
                 rowHeight * (index + 2f) - taskVerticalMargin,
             )
+            rect.set(untransformedRect)
+        }
+
+        fun transform(matrix: Matrix) {
+            // Трансформируем untransformedRect и помещаем полученные значения в rect
+            matrix.mapRect(rect, untransformedRect)
+            updatePath()
+        }
+
+        private fun updatePath() {
+            if (isRectOnScreen) {
+                // Вырезаемый круг
+                with(cutOutPath) {
+                    reset()
+                    addCircle(rect.left, rect.centerY(), cutOutRadius, Path.Direction.CW)
+                }
+                with(path) {
+                    reset()
+                    // Прямоугольник
+                    addRoundRect(rect, taskCornerRadius, taskCornerRadius, Path.Direction.CW)
+                    // Вырезаем из прямоугольника круг
+                    op(cutOutPath, Path.Op.DIFFERENCE)
+                }
+            }
         }
     }
 
     private inner class Transformations {
         var translationX = 0f
             private set
+        var scaleX = 1f
+            private set
+
+        // Матрица для преобразования фигур тасок
+        private val matrix = Matrix()
 
         // На сколько максимально можно сдвинуть диаграмму
         private val minTranslation: Float
-            get() = (width - contentWidth).toFloat().coerceAtMost(0f)
+            get() = (width - contentWidth * transformations.scaleX).coerceAtMost(0f)
 
         // Относительный сдвиг на dx
         fun addTranslation(dx: Float) {
             translationX = (translationX + dx).coerceIn(minTranslation, 0f)
+            transformTasks()
+        }
+
+        // Относительное увеличение на sx
+        fun addScale(sx: Float) {
+            scaleX = (scaleX * sx).coerceIn(1f, MAX_SCALE)
+            recalculateTranslationX()
+            updatePeriodTypeIfNeeded(scaleX)
+            transformTasks()
+        }
+
+        // Пересчет необходимых значений и применение к таскам
+        fun recalculate() {
+            recalculateTranslationX()
+            updatePeriodTypeIfNeeded(scaleX)
+            transformTasks()
+        }
+
+        // Когда изменился scale или размер View надо пересчитать сдвиг
+        private fun recalculateTranslationX() {
+            translationX = translationX.coerceIn(minTranslation, 0f)
+        }
+
+        private fun transformTasks() {
+            // Подготовка матрицы для трансформации фигур тасок
+            with(matrix) {
+                reset()
+                // Порядок имеет значение
+                postScale(scaleX, 1f)
+                postTranslate(translationX, 0f)
+            }
+            uiTasks.forEach { it.transform(matrix) }
             invalidate()
         }
 
-        // Пересчет текущих значений
-        fun recalculate() {
-            recalculateTranslationX()
+        // В зависимости от скейла PeriodType может измениться
+        private fun updatePeriodTypeIfNeeded(scale: Float) {
+            val periodTypes = PeriodType.values()
+            // Шаг скейла, при котором меняется PeriodType
+            val scaleStep = (MAX_SCALE - 1f) / periodTypes.size
+            val periodTypeIndex = ((scale - 1f) / scaleStep).toInt().coerceAtMost(periodTypes.lastIndex)
+            val periodType = periodTypes[periodTypeIndex]
+            if (this@GantView.periodType != periodType) {
+                this@GantView.periodType = periodType
+                updateTasksRects()
+            }
         }
+    }
 
-        // Когда изменился размер View надо пересчитать сдвиг
-        private fun recalculateTranslationX() {
-            translationX = translationX.coerceIn(minTranslation, 0f)
+    private inner class ScaleListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector?): Boolean {
+            return if (detector != null) {
+                transformations.addScale(detector.scaleFactor)
+                true
+            } else {
+                false
+            }
         }
     }
 
